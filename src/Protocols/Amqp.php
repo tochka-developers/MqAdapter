@@ -1,7 +1,7 @@
 <?php
 
 
-namespace Tochka\MQAdapter;
+namespace Tochka\MQAdapter\Protocols;
 
 use AMQPChannel;
 use AMQPConnection;
@@ -10,16 +10,20 @@ use AMQPExchange;
 use AMQPQueue;
 use Tochka\MQAdapter\Exceptions\MqAdapterException;
 
-class AmqpAdapter
+/**
+ * Class Amqp
+ * @package Tochka\MQAdapter\Protocols
+ */
+class Amqp
 {
-    private $hosts;
-    private $login;
-    private $password;
-    private $settings;
-    private $connection;
-    private $channel;
-    private $queues;
-    private $currentQueue;
+    protected $hosts;
+    protected $login;
+    protected $password;
+    protected $settings;
+    protected $connection;
+    protected $channel;
+    protected $queues;
+    protected $currentQueue;
 
     /**
      * AmqpAdapter constructor.
@@ -69,6 +73,16 @@ class AmqpAdapter
         unset($this->channel, $this->connection);
     }
 
+    /**
+     * @param string $destination
+     * @param string $message
+     * @param array  $settings
+     *
+     * @return bool
+     * @throws \AMQPChannelException
+     * @throws \AMQPConnectionException
+     * @throws \AMQPExchangeException
+     */
     public function send(string $destination, string $message, array $settings = []): bool
     {
         $this->checkConnection();
@@ -76,7 +90,7 @@ class AmqpAdapter
         $exchange = new AMQPExchange($this->channel);
         $exchange->setName($destination);
 
-        return $exchange->publish($message);
+        return $exchange->publish($message, null, AMQP_NOPARAM, $settings);
     }
 
     /**
@@ -91,6 +105,8 @@ class AmqpAdapter
         // Случайно выбираем очередь из числа подписанных
         $queueKey = array_rand($this->queues);
 
+        echo $queueKey, PHP_EOL;
+
         $queue = $this->queues[$queueKey];
 
         $this->currentQueue = $queue;
@@ -98,27 +114,31 @@ class AmqpAdapter
         /** @var AMQPEnvelope $message */
         $message = $queue->get(AMQP_NOPARAM);
 
-        return $message;
+        if (is_bool($message)) {
+            return $message;
+        }
+
+        return $this->adaptMessage($message);
     }
 
     /**
-     * @param AMQPEnvelope $message
+     * @param array $message
      *
      * @return mixed
      */
-    public function ack(AMQPEnvelope $message)
+    public function ack(array $message)
     {
-        return $this->currentQueue->ack($message->getDeliveryTag(), AMQP_NOPARAM);
+        return $this->currentQueue->ack($message['deliveryTag'], AMQP_NOPARAM);
     }
 
     /**
-     * @param AMQPEnvelope $message
+     * @param array $message
      *
      * @return mixed
      */
-    public function nack(AMQPEnvelope $message)
+    public function nack(array $message)
     {
-        return $this->currentQueue->nack($message->getDeliveryTag(), AMQP_NOPARAM);
+        return $this->currentQueue->nack($message['deliveryTag'], AMQP_NOPARAM);
     }
 
     public function subscribe($queueName)
@@ -131,7 +151,7 @@ class AmqpAdapter
         return $this->queues[$queueName];
     }
 
-    public function subscribeAll()
+    public function subscribeAll(): void
     {
         foreach ($this->queues as $queueName => $queue) {
             if (empty($queue)) {
@@ -140,14 +160,22 @@ class AmqpAdapter
         }
     }
 
-    public function unsubscribe($queue)
+    public function unsubscribe($queueName)
     {
+        if (empty($this->queues[$queueName])) {
+            return;
+        }
 
+        unset($this->queues[$queueName]);
     }
 
     public function unsubscribeAll(): void
     {
-
+        foreach ($this->queues as $queueName => $queue) {
+            if (empty($queue)) {
+                $this->unsubscribe($queueName);
+            }
+        }
     }
 
     /**
@@ -156,7 +184,29 @@ class AmqpAdapter
     public function clearSubscribes(): void
     {
         $this->unsubscribeAll();
-        $this->queues = [];
+        $this->queues = null;
+    }
+
+    public function __sleep()
+    {
+        return ['hosts', 'login', 'password', 'settings', 'connection', 'channel', 'queues', 'currentQueue'];
+    }
+
+    /**
+     * @param AMQPEnvelope $message
+     *
+     * @return array
+     */
+    protected function adaptMessage(AMQPEnvelope $message)
+    {
+        $headers = $message->getHeaders();
+        $headers['destination'] = $this->currentQueue->getName();
+
+        return [
+            'body'        => $message->getBody(),
+            'headers'     => $headers,
+            'deliveryTag' => $message->getDeliveryTag(),
+        ];
     }
 
     /**

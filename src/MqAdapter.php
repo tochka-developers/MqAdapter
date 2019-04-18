@@ -5,6 +5,10 @@ namespace Tochka\MQAdapter;
 
 use Tochka\MQAdapter\Exceptions\MqAdapterException;
 
+/**
+ * Class MqAdapter
+ * @package Tochka\MQAdapter
+ */
 class MqAdapter
 {
 
@@ -44,7 +48,7 @@ class MqAdapter
         $this->password = $password;
         $this->settings = $settings;
 
-        $className = 'Tochka\\MQAdapter\\' . ucfirst($protocol) . 'Adapter';
+        $className = 'Tochka\\MQAdapter\\Protocols\\' . ucfirst($protocol);
         $this->adapter = new $className($this->hosts, $login, $password, $settings);
 
         $this->adapter->checkConnection();
@@ -82,16 +86,6 @@ class MqAdapter
         return $this->adapter->getNextMessage();
     }
 
-    //    protected function disconnect()
-    //    {
-    //        $this->adapter->disconnect();
-    //    }
-
-    //    public function checkConnection()
-    //    {
-    //
-    //    }
-
     /**
      * Подтверждает обработку сообщения
      *
@@ -115,24 +109,6 @@ class MqAdapter
     {
         return $this->adapter->nack($message);
     }
-
-    //    /**
-    //     * Выполняет подключение
-    //     */
-    //    public function connect()
-    //    {
-    //
-    //    }
-    //
-    //    /**
-    //     * Выполняет переподключение
-    //     */
-    //    public function reconnect()
-    //    {
-    //        $this->disconnect();
-    //        $this->connect();
-    //        $this->subscribeAll();
-    //    }
 
     /**
      * Подписываемся на все сохраненные подписки
@@ -181,32 +157,14 @@ class MqAdapter
     {
         return $this->adapter->unsubscribe($queue);
     }
-
-    //    /**
-    //     * Проверяет, что у нас есть активный ресурс подключения
-    //     * @return bool
-    //     */
-    //    protected function isStompResource()
-    //    {
-    //        //return !empty($this->stomp) && is_resource($this->stomp);
-    //    }
-    //
-    //    /**
-    //     * Проверяет на наличие ошибок
-    //     * @return bool
-    //     */
-    //    protected function hasErrors()
-    //    {
-    //        //return stomp_error($this->stomp);
-    //    }
-
+    
     /**
      * Сериализуем только важные данные
      * @return array
      */
     public function __sleep()
     {
-        return ['hosts', 'login', 'password', 'headers', 'errors', 'queues', 'protocol', 'adapter'];
+        return ['hosts', 'login', 'password', 'settings', 'errors', 'queues', 'protocol', 'adapter'];
     }
 
     /**
