@@ -104,9 +104,6 @@ class Amqp
 
         // Случайно выбираем очередь из числа подписанных
         $queueKey = array_rand($this->queues);
-
-        echo $queueKey, PHP_EOL;
-
         $queue = $this->queues[$queueKey];
 
         $this->currentQueue = $queue;
