@@ -24,7 +24,7 @@ class Amqp
     protected $channel;
     protected $queues;
     protected $currentQueue;
-
+    
     /**
      * AmqpAdapter constructor.
      *
@@ -40,7 +40,7 @@ class Amqp
         $this->password = $password;
         $this->settings = $settings;
     }
-
+    
     /**
      * При уничтожении объекта - отключаемся
      */
@@ -48,7 +48,7 @@ class Amqp
     {
         $this->disconnect();
     }
-
+    
     /**
      * Проверка подключения к посреднику
      */
@@ -57,10 +57,10 @@ class Amqp
         if (!$this->isConnected() || $this->hasErrors()) {
             return $this->reconnect();
         }
-
+        
         return true;
     }
-
+    
     /**
      * Выполняет отключение
      */
@@ -72,7 +72,7 @@ class Amqp
         }
         unset($this->channel, $this->connection);
     }
-
+    
     /**
      * @param string $destination
      * @param string $message
@@ -86,13 +86,13 @@ class Amqp
     public function send(string $destination, string $message, array $settings = []): bool
     {
         $this->checkConnection();
-
+        
         $exchange = new AMQPExchange($this->channel);
         $exchange->setName($destination);
-
+        
         return $exchange->publish($message, null, AMQP_NOPARAM, $settings);
     }
-
+    
     /**
      * Вычитывает и возвращает новые сообщения (если они есть)
      *
@@ -101,23 +101,23 @@ class Amqp
     public function getNextMessage()
     {
         $this->checkConnection();
-
+        
         // Случайно выбираем очередь из числа подписанных
         $queueKey = array_rand($this->queues);
         $queue = $this->queues[$queueKey];
-
+        
         $this->currentQueue = $queue;
-
+        
         /** @var AMQPEnvelope $message */
         $message = $queue->get(AMQP_NOPARAM);
-
+        
         if (is_bool($message)) {
             return $message;
         }
-
+        
         return $this->adaptMessage($message);
     }
-
+    
     /**
      * @param array $message
      *
@@ -127,7 +127,7 @@ class Amqp
     {
         return $this->currentQueue->ack($message['deliveryTag'], AMQP_NOPARAM);
     }
-
+    
     /**
      * @param array $message
      *
@@ -137,17 +137,17 @@ class Amqp
     {
         return $this->currentQueue->nack($message['deliveryTag'], AMQP_NOPARAM);
     }
-
+    
     public function subscribe($queueName)
     {
         if (empty($this->queues[$queueName])) {
             $this->queues[$queueName] = new AMQPQueue($this->channel);
             $this->queues[$queueName]->setName($queueName);
         }
-
+        
         return $this->queues[$queueName];
     }
-
+    
     public function subscribeAll(): void
     {
         foreach ($this->queues as $queueName => $queue) {
@@ -156,16 +156,16 @@ class Amqp
             }
         }
     }
-
+    
     public function unsubscribe($queueName)
     {
         if (empty($this->queues[$queueName])) {
             return;
         }
-
+        
         unset($this->queues[$queueName]);
     }
-
+    
     public function unsubscribeAll(): void
     {
         foreach ($this->queues as $queueName => $queue) {
@@ -174,7 +174,7 @@ class Amqp
             }
         }
     }
-
+    
     /**
      * Отписываемся от всех активных подписок и чистим список очередей
      */
@@ -183,12 +183,12 @@ class Amqp
         $this->unsubscribeAll();
         $this->queues = null;
     }
-
+    
     public function __sleep()
     {
         return ['hosts', 'login', 'password', 'settings', 'connection', 'channel', 'queues', 'currentQueue'];
     }
-
+    
     /**
      * @param AMQPEnvelope $message
      *
@@ -198,25 +198,25 @@ class Amqp
     {
         $headers = $message->getHeaders();
         $headers['destination'] = $this->currentQueue->getName();
-
+        
         return [
             'body'        => $message->getBody(),
             'headers'     => $headers,
             'deliveryTag' => $message->getDeliveryTag(),
         ];
     }
-
+    
     /**
      * Определяет, подключен ли объект AMQPConnection к посреднику и есть ли активный канал
      * @return bool
      */
     protected function isConnected(): bool
     {
-
+        
         return !empty($this->connection) && $this->connection->isConnected()
             && !empty($this->channel) && $this->channel->isConnected();
     }
-
+    
     /**
      * Проверяет на наличие ошибок
      * @return bool
@@ -225,25 +225,34 @@ class Amqp
     {
         return false;
     }
-
+    
     /**
      * Выполняет переподключение
      */
     protected function reconnect(): bool
     {
         if ($this->connection) {
-
+            
+            $queues = array_keys($this->queues);
+            
             if ($this->channel) {
                 $this->channel->close();
             }
-
+            
             $this->connection->reconnect();
             $this->channel = new AMQPChannel($this->connection);
+            
+            $this->clearSubscribes();
+            foreach ($queues as $queue) {
+                $this->subscribe($queue);
+            }
+            
+            return true;
         }
-
+        
         return $this->connect();
     }
-
+    
     /**
      * @return bool
      * @throws MqAdapterException
@@ -251,46 +260,46 @@ class Amqp
      */
     protected function connect(): bool
     {
-
+        
         $this->errors = [];
         $link = null;
-
+        
         foreach ($this->hosts as $host) {
-
+            
             [$host, $port] = explode(':', $host);
-
+            
             $credentials = [
-                'host'     => $host,
-                'port'     => $port,
-                'vhost'    => $this->settings['vhost'],
-                'login'    => $this->login,
-                'password' => $this->password,
+                'host'            => $host,
+                'port'            => $port,
+                'vhost'           => $this->settings['vhost'],
+                'login'           => $this->login,
+                'password'        => $this->password,
+                'connect_timeout' => $this->settings['connect_timeout'] ?? 0,
+                'heartbeat'       => $this->settings['heartbeat'] ?? 0,
             ];
-
+            
             $link = new AMQPConnection($credentials);
-
+            
             try {
                 $link->connect();
             } catch (\Exception $e) {
                 $this->errors[] = '[' . $host . ']: ' . $e->getMessage();
             }
-
+            
             if ($link->isConnected()) {
                 $this->connection = $link;
-
+                
                 $this->channel = new AMQPChannel($link);
-
+                
                 return true;
             }
         }
-
+        
         if ($this->errors) {
             $errors = implode('; ', $this->errors);
             throw new MqAdapterException('Could`nt connect to Broker by provided hosts: ' . $errors);
         }
-
+        
         return false;
     }
-
-
 }
