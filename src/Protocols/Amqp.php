@@ -239,12 +239,18 @@ class Amqp
                 $this->channel->close();
             }
             
+            if ($this->queues) {
+                $queues = array_keys($this->queues);
+            }
+            
             $this->connection->reconnect();
             $this->channel = new AMQPChannel($this->connection);
             
-            $this->clearSubscribes();
-            foreach ($queues as $queue) {
-                $this->subscribe($queue);
+            if (isset($queues)) {
+                $this->clearSubscribes();
+                foreach ($queues as $queue) {
+                    $this->subscribe($queue);
+                }
             }
             
             return true;
