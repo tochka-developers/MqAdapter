@@ -233,13 +233,11 @@ class Amqp
     {
         if ($this->connection) {
             
-            $queues = array_keys($this->queues);
-            
             if ($this->channel) {
                 $this->channel->close();
             }
             
-            if ($this->queues) {
+            if (!empty($this->queues)) {
                 $queues = array_keys($this->queues);
             }
             
