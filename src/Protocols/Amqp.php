@@ -272,6 +272,8 @@ class Amqp
             
             [$host, $port] = explode(':', $host);
             
+            $heartbeat = $this->settings['heartbeat'] ?? null;
+            
             $credentials = [
                 'host'            => $host,
                 'port'            => $port,
@@ -279,8 +281,11 @@ class Amqp
                 'login'           => $this->login,
                 'password'        => $this->password,
                 'connect_timeout' => $this->settings['connect_timeout'] ?? 0,
-                'heartbeat'       => $this->settings['heartbeat'] ?? 0,
             ];
+            
+            if ($heartbeat !== null) {
+                $credentials['heartbeat'] = $heartbeat;
+            }
             
             $link = new AMQPConnection($credentials);
             
