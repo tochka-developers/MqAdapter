@@ -82,15 +82,21 @@ class Amqp
      * @throws \AMQPChannelException
      * @throws \AMQPConnectionException
      * @throws \AMQPExchangeException
+     * @throws \AMQPException
      */
     public function send(string $destination, string $message, array $settings = []): bool
     {
         $this->checkConnection();
         
         $exchange = new AMQPExchange($this->channel);
-        $exchange->setName($destination);
         
-        return $exchange->publish($message, null, AMQP_NOPARAM, $settings);
+        $result = $exchange->publish($message, $destination, AMQP_NOPARAM, $settings);
+        
+        if (!$result) {
+            throw new \AMQPException('Failed to publish content.');
+        }
+        
+        return $result;
     }
     
     /**
