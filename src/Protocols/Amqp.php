@@ -8,6 +8,9 @@ use AMQPConnection;
 use AMQPEnvelope;
 use AMQPExchange;
 use AMQPQueue;
+use AMQPQueueException;
+use AMQPException;
+use AMQPBasicProperties;
 use Tochka\MQAdapter\Exceptions\MqAdapterException;
 
 /**
@@ -16,14 +19,25 @@ use Tochka\MQAdapter\Exceptions\MqAdapterException;
  */
 class Amqp
 {
+    public const CONNECT_TYPE_PUBLISH = 'publish';
+    public const CONNECT_TYPE_CONSUME = 'consume';
+    public const PUBLISH_CONFIRM_WAIT = 0.4;
+    
     protected $hosts;
     protected $login;
     protected $password;
     protected $settings;
+    /**
+     * @var AMQPConnection $connection
+     */
     protected $connection;
+    /**
+     * @var AMQPChannel $channel
+     */
     protected $channel;
     protected $queues;
     protected $currentQueue;
+    protected $connectType = self::CONNECT_TYPE_CONSUME;
     
     /**
      * AmqpAdapter constructor.
@@ -39,6 +53,11 @@ class Amqp
         $this->login = $login;
         $this->password = $password;
         $this->settings = $settings;
+    }
+    
+    public function setConnectTypePublish(): void
+    {
+        $this->connectType = self::CONNECT_TYPE_PUBLISH;
     }
     
     /**
@@ -86,14 +105,25 @@ class Amqp
      */
     public function send(string $destination, string $message, array $settings = []): bool
     {
+        $this->setConnectTypePublish();
+        
         $this->checkConnection();
         
+        $this->setPublisherConfirms();
+        
         $exchange = new AMQPExchange($this->channel);
-        
-        $result = $exchange->publish($message, $destination, AMQP_NOPARAM, $settings);
-        
+        $exchange->setName($destination);
+        $result = $exchange->publish($message, '', AMQP_NOPARAM, $settings);
         if (!$result) {
-            throw new \AMQPException('Failed to publish content.');
+            throw new AMQPException('Failed to publish content.');
+        }
+        
+        try {
+            $this->channel->waitForConfirm(self::PUBLISH_CONFIRM_WAIT);
+        } catch (AMQPException $e) {
+            if ((int)$e->getCode() !== 0) {
+                throw $e;
+            }
         }
         
         return $result;
@@ -102,7 +132,8 @@ class Amqp
     /**
      * Вычитывает и возвращает новые сообщения (если они есть)
      *
-     * @return bool|AMQPEnvelope
+     * @return AMQPEnvelope|array
+     * @throws AMQPQueueException
      */
     public function getNextMessage()
     {
@@ -114,8 +145,15 @@ class Amqp
         
         $this->currentQueue = $queue;
         
-        /** @var AMQPEnvelope $message */
-        $message = $queue->get(AMQP_NOPARAM);
+        try {
+            /** @var AMQPEnvelope $message */
+            $message = $queue->get(AMQP_NOPARAM);
+        } catch (AMQPQueueException $e) {
+            if ((int)$e->getCode() === 404) {
+                sleep(3);
+            }
+            throw $e;
+        }
         
         if (is_bool($message)) {
             return $message;
@@ -163,7 +201,7 @@ class Amqp
         }
     }
     
-    public function unsubscribe($queueName)
+    public function unsubscribe($queueName): void
     {
         if (empty($this->queues[$queueName])) {
             return;
@@ -200,7 +238,7 @@ class Amqp
      *
      * @return array
      */
-    protected function adaptMessage(AMQPEnvelope $message)
+    protected function adaptMessage(AMQPEnvelope $message): array
     {
         $headers = $message->getHeaders();
         $headers['destination'] = $this->currentQueue->getName();
@@ -234,6 +272,10 @@ class Amqp
     
     /**
      * Выполняет переподключение
+     *
+     * @return bool
+     * @throws MqAdapterException
+     * @throws \AMQPConnectionException
      */
     protected function reconnect(): bool
     {
@@ -249,6 +291,9 @@ class Amqp
             
             $this->connection->reconnect();
             $this->channel = new AMQPChannel($this->connection);
+            if ($this->connectType === self::CONNECT_TYPE_PUBLISH) {
+                $this->setPublisherConfirms();
+            }
             
             if (isset($queues)) {
                 $this->clearSubscribes();
@@ -261,6 +306,29 @@ class Amqp
         }
         
         return $this->connect();
+    }
+    
+    /**
+     * Включаем механизм подтверждения публикации сообщения
+     */
+    private function setPublisherConfirms(): void
+    {
+        
+        $this->channel->setPrefetchCount(1);
+        $this->channel->confirmSelect();
+        $this->channel->setConfirmCallback(function ($delivery_tag, $multiple) {
+            echo 'Message acked: ' . $delivery_tag . '/' . ($multiple ? 'multiple' : 'noMultiple'), PHP_EOL;
+            
+            return true;
+        }, function ($delivery_tag, $multiple, $requeue) {
+            throw new MqAdapterException('Message nacked: ' . $delivery_tag . '/' . ($multiple ? 'multiple' : 'noMultiple') . '/' . $requeue);
+        });
+        $this->channel->setReturnCallback(
+            function ($reply_code, $reply_text, $exchange, $routing_key, AMQPBasicProperties $properties, $body) {
+                echo 'Message returned: ', $reply_code, '-', $reply_text, ', message body:', $body, PHP_EOL;
+            }
+        );
+        
     }
     
     /**
@@ -305,6 +373,10 @@ class Amqp
                 $this->connection = $link;
                 
                 $this->channel = new AMQPChannel($link);
+                
+                if ($this->connectType === self::CONNECT_TYPE_PUBLISH) {
+                    $this->setPublisherConfirms();
+                }
                 
                 return true;
             }
